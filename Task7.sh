@@ -1,15 +1,24 @@
 #!/bin/bash
 
-pidstat 1 60 -d | grep -v '^Linux' | grep -v '^# ' | awk '$2 ~ /^[0-9]/' > pidstat_output.txt
+# Запустите iostat в фоновом режиме с интервалом 1 секунда в течение 60 секунд
+iostat -o JSON 1 60 > iostat_output.json &
 
-processes=$(cat pidstat_output.txt | tail -n +3 | sort -k6 -n -r | head -n 3)
+# Спим 1 минуту
+sleep 60
 
-while read -r line; do
-    pid=$(echo "$line" | awk '{print $1}')
-    cmd=$(echo "$line" | awk '{$1=""; $2=""; print $0}')
-    io_data=$(echo "$line" | awk '{print $6}')
+# Останавливаем iostat
+pkill -f "iostat -o JSON"
 
-    echo "PID=$pid : Command=$cmd : Data_Read=$io_data"
-done <<< "$processes"
+# Извлекаем три процесса, которые считали максимальное количество байт
+top_processes=$(grep -E 'tps|kB_read/s' iostat_output.json | jq -c '.sysstat.hosts[0].statistics[0].disk[]' | sort -t ':' -k2 -n -r | head -n 3)
 
-rm pidstat_output.txt
+# Выводим PID, строки запуска и объем считанных данных
+while read -r process; do
+    pid=$(echo "$process" | jq -r '.name')
+    cmd=$(ps -o cmd= -p $pid)
+    kb_read=$(echo "$process" | jq -r '.read')
+    echo "PID=$pid : Command=$cmd : Data_Read=${kb_read}KB"
+done <<< "$top_processes"
+
+# Удаляем временный файл
+rm iostat_output.json
